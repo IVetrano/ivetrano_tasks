@@ -11,7 +11,7 @@ def set_connection():
     """
     conn = mysql.connector.connect(
         user='ivetranotask',
-        password='tasks123',
+        password='tasks1234',
         host='ivetranotask.mysql.pythonanywhere-services.com',
         database='ivetranotask$default')
     return conn
@@ -26,7 +26,7 @@ def get_tasks():
     """
     try:
         conn = set_connection()
-        cursor = conn.cursor()
+        cursor = conn.cursor(dictionary=True)  # Devuelve los resultados como diccionarios
 
         filters = {
             'title': request.args.get('title'),
@@ -39,20 +39,21 @@ def get_tasks():
             'id_parent': request.args.get('id_parent')
         }
         tags = request.args.getlist("tags")
-        
+
         query = """
-            SELECT DISTINCT * t.*
+            SELECT t.*, tg.name AS tag_name, tg.colour AS tag_colour
             FROM tasks t
-            LEFT JOIN assignedTo at ON t.id = at.id_task
             LEFT JOIN hasTag ht ON t.id = ht.id_task
+            LEFT JOIN tags tg ON ht.tag_name = tg.name
+            LEFT JOIN assignedTo at ON t.id = at.id_task
             WHERE 1=1
             """
         params = []
-        
+
         if filters['title']:
             query += " AND t.title LIKE %s"
-            params.append(f"%{filters['title']}")
-        
+            params.append(f"%{filters['title']}%")
+
         if filters['status']:
             query += " AND t.status = %s"
             params.append(filters['status'])
@@ -60,27 +61,27 @@ def get_tasks():
         if filters['priority']:
             query += " AND t.priority = %s"
             params.append(filters['priority'])
-        
+
         if filters['was_made_by']:
             query += " AND t.was_made_by = %s"
             params.append(filters['was_made_by'])
-        
+
         if filters['assigned_to']:
             query += " AND at.username = %s"
             params.append(filters['assigned_to'])
-        
+
         if filters['end_date']:
             query += " AND t.end_date = %s"
             params.append(filters['end_date'])
-        
+
         if filters['creation_date']:
             query += " AND t.creation_date = %s"
             params.append(filters['creation_date'])
-        
+
         if filters['id_parent']:
             query += " AND t.id_parent = %s"
             params.append(filters['id_parent'])
-        
+
         if tags:
             query += """
             AND t.id IN (
@@ -93,33 +94,44 @@ def get_tasks():
             """.format(', '.join(['%s'] * len(tags)))
             params.extend(tags)
             params.append(len(tags))
-        
+
         cursor.execute(query, params)
         tasks = cursor.fetchall()
 
-        tasks_list = []
+        # Organizar los resultados agrupando los tags
+        tasks_dict = {}
         for task in tasks:
-            tasks_list.append({
-                'id': task[0],
-                'title': task[1],
-                'description': task[2],
-                'priority': task[3],
-                'status': task[4],
-                'creation_date': task[5],
-                'end_date': task[6],
-                'was_made_by': task[7],
-                'id_parent': task[8]
-            })
-        return jsonify(tasks_list), 200
+            task_id = task["id"]
+            if task_id not in tasks_dict:
+                tasks_dict[task_id] = {
+                    'id': task['id'],
+                    'title': task['title'],
+                    'description': task['description'],
+                    'priority': task['priority'],
+                    'status': task['status'],
+                    'creation_date': task['creation_date'].isoformat() if task['creation_date'] else None,
+                    'end_date': task['end_date'].isoformat() if task['end_date'] else None,
+                    'was_made_by': task['was_made_by'],
+                    'id_parent': task['id_parent'],
+                    'tags': []
+                }
+            if task['tag_name']:  # Solo agregar tags si existen
+                tasks_dict[task_id]['tags'].append({
+                    'name': task['tag_name'],
+                    'colour': task['tag_colour']
+                })
+
+        return jsonify(list(tasks_dict.values())), 200
 
     except mysql.connector.Error as e:
         return jsonify({"error": "Database error", "details": str(e)}), 500
 
     except Exception as e:
         return jsonify({"error": "Unexpected error", "details": str(e)}), 500
-    
+
     finally:
         conn.close()
+
 
 @app.route('/tasks/<int:task_id>', methods=['GET'])
 def get_task_by_id(task_id):
@@ -149,11 +161,11 @@ def get_task_by_id(task_id):
 
     except mysql.connector.Error as e:
         return jsonify({"error": "Database error", "details": str(e)}), 500
-    
+
     finally:
         conn.close()
 
-        
+
 
 @app.route('/tasks', methods=['POST'])
 def create_task():
@@ -194,26 +206,26 @@ def create_task():
 
         for tag in tags:
             cursor.execute("INSERT INTO hastag(id_task, tag_name) VALUES (%s, %s)", (task_id, tag))
-        
+
         for user in assigned_users:
             cursor.execute("INSERT INTO assignedTo(id_task, username) VALUES (%s, %s)", (task_id, user))
 
         conn.commit()
         return jsonify({'message': 'Task created successfully'}), 201
-    
+
     except KeyError as e:
         missing_field = str(e).strip("'")
         return jsonify({'error': f'Missing required field: {missing_field}'}), 400
 
     except mysql.connector.errors.IntegrityError as e:
         return jsonify({"error": "Integrity error", "details": str(e)}), 400
-    
+
     except mysql.connector.Error as e:
         return jsonify({"error": "Database error", "details": str(e)}), 500
 
     except Exception as e:
         return jsonify({"error": "Unexpected error", "details": str(e)}), 500
-    
+
     finally:
         conn.close()
 
@@ -296,7 +308,7 @@ def delete_task(id):
             return jsonify({"error": "Task not found"}), 404
 
         return jsonify({'message': 'Task deleted successfully'}), 200
-    
+
     except mysql.connector.Error as e:
         return jsonify({"error": "Database error", "details": str(e)}), 500
 
@@ -337,10 +349,10 @@ def get_users():
                 'role': user[4]
             })
         return jsonify(users_list), 200
-    
+
     except SQLAlchemyError as e:
         return str(e)
-    
+
     finally:
         conn.close()
 
@@ -367,7 +379,7 @@ def get_user_by_username(username):
 
     except mysql.connector.Error as e:
         return jsonify({"error": "Database error", "details": str(e)}), 500
-    
+
     finally:
         conn.close()
 
@@ -401,20 +413,20 @@ def create_user():
         ))
         conn.commit()
         return jsonify({'message': 'User created successfully'}), 201
-    
+
     except KeyError as e:
         missing_field = str(e).strip("'")
         return jsonify({'error': f'Missing required field: {missing_field}'}), 400
 
     except mysql.connector.errors.IntegrityError as e:
         return jsonify({"error": "Integrity error", "details": str(e)}), 400
-    
+
     except mysql.connector.Error as e:
         return jsonify({"error": "Database error", "details": str(e)}), 500
 
     except Exception as e:
         return jsonify({"error": "Unexpected error", "details": str(e)}), 500
-    
+
     finally:
         conn.close()
 
@@ -455,13 +467,13 @@ def update_user(username):
             return jsonify({'error': 'User not found'}), 404
 
         return jsonify({'message': 'User updated successfully'}), 200
-    
+
     except mysql.connector.Error as e:
         return jsonify({"error": "Database error", "details": str(e)}), 500
 
     except Exception as e:
         return jsonify({"error": "Unexpected error", "details": str(e)}), 500
-    
+
     finally:
         conn.close()
 
@@ -482,7 +494,7 @@ def delete_user(username):
             return jsonify({"error": "User not found"}), 404
 
         return jsonify({'message': 'User deleted successfully'}), 200
-    
+
     except mysql.connector.Error as e:
         return jsonify({"error": "Database error", "details": str(e)}), 500
 
@@ -521,10 +533,10 @@ def get_tags():
                 'colour': tag[1]
             })
         return jsonify(tags_list), 200
-    
+
     except SQLAlchemyError as e:
         return str(e)
-    
+
     finally:
         conn.close()
 
@@ -549,7 +561,7 @@ def get_tag_by_name(name):
 
     except mysql.connector.Error as e:
         return jsonify({"error": "Database error", "details": str(e)}), 500
-    
+
     finally:
         conn.close()
 
@@ -577,20 +589,20 @@ def create_tag():
         ))
         conn.commit()
         return jsonify({'message': 'Tag created successfully'}), 201
-    
+
     except KeyError as e:
         missing_field = str(e).strip("'")
         return jsonify({'error': f'Missing required field: {missing_field}'}), 400
 
     except mysql.connector.errors.IntegrityError as e:
         return jsonify({"error": "Integrity error", "details": str(e)}), 400
-    
+
     except mysql.connector.Error as e:
         return jsonify({"error": "Database error", "details": str(e)}), 500
 
     except Exception as e:
         return jsonify({"error": "Unexpected error", "details": str(e)}), 500
-    
+
     finally:
         conn.close()
 
@@ -630,13 +642,13 @@ def update_tag(name):
             return jsonify({'error': 'Tag not found'}), 404
 
         return jsonify({'message': 'Tag updated successfully'}), 200
-    
+
     except mysql.connector.Error as e:
         return jsonify({"error": "Database error", "details": str(e)}), 500
 
     except Exception as e:
         return jsonify({"error": "Unexpected error", "details": str(e)}), 500
-    
+
     finally:
         conn.close()
 
@@ -657,7 +669,7 @@ def delete_tag(name):
             return jsonify({"error": "Tag not found"}), 404
 
         return jsonify({'message': 'Tag deleted successfully'}), 200
-    
+
     except mysql.connector.Error as e:
         return jsonify({"error": "Database error", "details": str(e)}), 500
 
